@@ -1,0 +1,5 @@
+lxml
+mwxml
+mysql-connector-python
+pymenu-console
+openpyxl
