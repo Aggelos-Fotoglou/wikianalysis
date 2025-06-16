@@ -233,7 +233,8 @@ try:
             if i - lasti > 100000:
                 lasti = i
                 ui_progress_print(i)
-        
+
+        db.ping(reconnect=True, attempts=3)
         dbcursor.execute("describe " + wordtable)
         for column, valuetype, _, _, _, _ in dbcursor:
             if column == "word":
@@ -243,6 +244,7 @@ try:
         cache_length = len(cache)
         if largestword > mysql_word_limit:
             too_long_words_file = ui_handle_too_long_words(dbcursor, wordtable, largestword)
+            db.ping(reconnect=True, attempts=3)
             if too_long_words_file is None:
                 # Handled with resize
                 print("Resized Completed! Dumping cache to database...")
