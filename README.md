@@ -17,7 +17,11 @@ After that, <b>unpack the archive by using 7zip</b>, any other similar program o
 bzip2 -d {archive_name.bz2}
 ```
 ## Prepare your database
-This programm uses a mysql database for storing the output data. Make sure you have the mysql database server installed and have prepared a user with at least the `SELECT` and `INSERT` priviledges for a specific table. The table should have 2 fields:
+This program supports two different types of databases, mysql and sqlite3. You can choose the one that best fits your needs.
+### SQLite3
+SQLite3 is the easiest backend to use. Their is no need to setup any server or additional program, as sqlite3 databases are stored locally in a specific file. You just run the `analyser.py` program, no setup needed, and it automatically creates an sqlite3 database file named `wikianalysis.db` in the currect directory.
+### MySQL
+MySQL is a bit more complicated to install. The mysql installation and setup will not be described here, as there are several tutorials in the internet. Just make sure you have the mysql database server installed and have prepared a user with at least the `SELECT` and `INSERT` priviledges for a specific table. The table should have 2 fields:
 1) `word` : `varchar(50)` (can also have any other maximum size. The program will ask if you want to resize it in case a word does not fit)
 2) `times` : `bigint` (can also be any bigger or smaller integer type)  
 The program offers different options for connecting to mysql. You can connect either with a unix_socket or with an ip connection
@@ -39,7 +43,8 @@ python3 quick_results.py
 The following python libraries make this program possible:  
 - [lxml](https://pypi.org/project/lxml/): For parsing the html to removing the tags (they don't count as words)
 - [mwxml](https://pypi.org/project/mwxml/): For loading the wikipedia xml dumps
-- [mysql-connector-python](https://pypi.org/project/mysql-connector-python/) For connecting to the mysql database
-- [pymenu-console](https://pypi.org/project/pymenu-console/) For displaying the command line user interfaces (menus)
-- [openpyxl](https://pypi.org/project/openpyxl/) Used only by quick_results.py to create Excel documets
+- [mysql-connector-python](https://pypi.org/project/mysql-connector-python/): For connecting to the mysql database
+- sqlite3: Comes pre-installed with python. It can be used instead of mysql for outputing the data in a database
+- [pymenu-console](https://pypi.org/project/pymenu-console/): For displaying the command line user interfaces (menus)
+- [openpyxl](https://pypi.org/project/openpyxl/): Used only by quick_results.py to create Excel documets
 
