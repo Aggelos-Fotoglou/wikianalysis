@@ -1,16 +1,152 @@
 try:
     from lxml import html
     import mwxml
-    import mysql.connector
     from os import stat, listdir, path, getcwd
     from pymenu import select_menu, Menu
     from time import sleep
     import getpass
     import datetime
+    import sqlite3
+    import mysql.connector
 except ImportError as e:
     print("Failed importing required modules. Did you install requirement.txt?")
     print("Error message:", e.msg)
     exit()
+
+# Languages
+def validate_gr(character):
+    return (
+        ord('Α') <= ord(character) <= ord('Ρ') or
+        ord('Σ') <= ord(character) <= ord('ώ') or
+        character in ['Ά', 'Έ', 'Ί', 'Ή', 'Ύ', 'Ό', 'Ώ'] or
+        character in ['ά', 'έ', 'ί', 'ή', 'ύ', 'ό', 'ώ'] or
+        character in ['Ϊ', 'Ϋ'] or
+        character in ['ϊ', 'ϋ', 'ΐ', 'ΰ'] or
+        ord('ἀ') <= ord(character) <= ord('ᾼ') or
+        ord('ῂ') <= ord(character) <= ord('ῌ') or
+        ord('ῐ') <= ord(character) <= ord('Ί') or
+        ord('ῠ') <= ord(character) <= ord('Ῥ') or
+        ord('ῲ') <= ord(character) <= ord('ῼ')
+    )
+
+def validate_de(character):
+    return (
+        ord('a') <= ord(character) <= ord('z') or
+        ord('A') <= ord(character) <= ord('Z') or
+        character in ['ö', 'Ö', 'ä', 'Ä', 'ü', 'Ü']
+    )
+
+def validate_en(character):
+    return (
+        ord('a') <= ord(character) <= ord('z') or
+        ord('A') <= ord(character) <= ord('Z')
+    )
+wiki_language = {
+    "enwiki": "English",
+    "dewiki": "German",
+    "elwiki": "Greek"
+}
+language_validator = {
+    "English": validate_en,
+    "German": validate_de,
+    "Greek": validate_gr
+}
+
+class mysql_abstractions:
+    text_sizes = (
+        ("TINYTEXT", 255),
+        ("TEXT", 65535),
+        ("MEDIUMTEXT", 16777215),
+        ("LONGTEXT", 4294967295)
+    )
+    def connect(self):
+        while True:
+            print("Mysql connection method:")
+            if ui_yes_or_no("Use UNIX socket?") == True:
+                socketpath = input("Insert the UNIX socket path (default: /run/mysqld/mysqld.sock): ")
+                if socketpath == "":
+                    socketpath = "/run/mysqld/mysqld.sock"
+                username = input("Insert the username to use: ")
+                try:
+                    self.connection = mysql.connector.connect(
+                        unix_socket=socketpath,
+                        user=username,
+                        password=None
+                    )
+                    break
+                except mysql.connector.errors.Error as e:
+                    print("Error connecting to mysql:")
+                    print(e.msg)
+            else:
+                hostname = input("Insert the ip, hostname or url to the mysql server:")
+                username = input("Insert the username to use:")
+                password = getpass.getpass("Insert the password to use:")
+                try:
+                    self.connection = mysql.connector.connect(
+                        host=hostname,
+                        user=username,
+                        password=password
+                    )
+                    break
+                except mysql.connector.errors.Error as e:
+                    print("Error connecting to mysql:")
+                    print(e.msg)
+        self.cursor = self.connection.cursor()
+        self.cursor.execute("show databases")
+        database = select_menu.create_select_menu([i[0] for i in self.cursor], 'Select a database:')
+        self.cursor.execute("USE " + database)
+        self.cursor.execute("show tables")
+        self.table_name = select_menu.create_select_menu([i[0] for i in self.cursor], 'Select a table for the output data:')
+    def execute(self, query, *args, **kwards):
+        query = query.format(table=self.table_name)
+        self.connection.ping(reconnect=True, attempts=3)
+        self.cursor.execute(query, *args, **kwards)
+    def commit(self):
+        self.connection.commit()
+    def rollback(self):
+        self.connection.rollback()
+    def get_max_word_size(self):
+        self.execute("describe {table}")
+        for column, valuetype, _, _, _, _ in self.cursor:
+            if column == "word":
+                word_limit = int(valuetype[8:-1])
+                self.cursor.fetchall()
+                return word_limit
+    def resize(self, size):
+        for type_text, max_size in self.text_sizes:
+            if max_size > size:
+                self.execute("alter table {table} modify column word {data_type}".format(data_type=type_text))
+                break
+
+class sqlite3_abstractions:
+    def connect(self):
+        filename = "wikianalysis.db"
+        i = 2
+        while True:
+            if not path.exists(filename):
+                print(f"sqlite3 db will be saved with file name {filename} in the script folder")
+                break
+            filename = f"wikianalysis({i}).db"
+            i += 1
+        self.connection = sqlite3.connect(filename)
+        self.cursor = self.connection.cursor()
+        self.table_name = dump.site_info.dbname
+        self.execute("CREATE TABLE {table} (word TEXT, times INTEGER)")
+    def execute(self, query, *args, **kwards):
+        query = query.replace("%s", "?") # MySQL uses %s for sql-injection-safe values and sqlite uses ?
+        self.cursor.execute(query.format(table=self.table_name),*args, **kwards)
+    def commit(self):
+        self.connection.commit()
+    def rollback(self):
+        self.connection.rollback()
+    def get_max_word_size(self):
+        return 1000000000 # Default text sqlite3 max size
+    def resize():
+        pass
+def ui_get_language():
+    global language_validator
+    global dump
+    return select_menu.create_select_menu(language_validator.keys(), f"Seems like the programm does not know the language of {dump.site_info.dbname}. Languages with no special alphabetical characters cat use the English option. Please specifiy one of the following languages:")
 
 def ui_get_file(dir, hidden=False):
     while True:
@@ -82,46 +218,6 @@ def ui_yes_or_no(question):
         elif (answer in ["no", "No", "NO", "n", "N"]):
             return False
 
-def ui_connect_database():
-    while True:
-        print("Mysql connection method:")
-        if ui_yes_or_no("Use UNIX socket?") == True:
-            socketpath = input("Insert the UNIX socket path (default: /run/mysqld/mysqld.sock): ")
-            if socketpath == "":
-                socketpath = "/run/mysqld/mysqld.sock"
-            username = input("Insert the username to use: ")
-            try:
-                db = mysql.connector.connect(
-                    unix_socket=socketpath,
-                    user=username,
-                    password=None
-                )
-                return db
-            except mysql.connector.errors.Error as e:
-                print("Error connecting to mysql:")
-                print(e.msg)
-        else:
-            hostname = input("Insert the ip, hostname or url to the mysql server:")
-            username = input("Insert the username to use:")
-            password = getpass.getpass("Insert the password to use:")
-            try:
-                db = mysql.connector.connect(
-                    host=hostname,
-                    user=username,
-                    password=password
-                )
-                return db
-            except mysql.connector.errors.Error as e:
-                print("Error connecting to mysql:")
-                print(e.msg)
-def ui_get_table(dbcursor):
-    dbcursor.execute("show databases")
-    database = str(select_menu.create_select_menu([i[0] for i in dbcursor], 'Select a database:'))
-    dbcursor.execute("USE " + database)
-    dbcursor.execute("show tables")
-    table = select_menu.create_select_menu([i[0] for i in dbcursor], 'Select a table for the output data:')
-    return table
-
 def ui_progress_add(num):
     global progress
     progress += num
@@ -131,7 +227,7 @@ def ui_progress_print(i):
     global max_progress
     print(f"Words Processed: {i}. Progress: {progress * 100 / max_progress}%", end="\r")
 
-def ui_handle_too_long_words(dbcursor, wordtable, max_length):
+def ui_handle_too_long_words(database, max_length):
     options = [
         f"Resize mysql database column words to varchar({max_length})",
         "Write too long words to a seperate .txt file"
@@ -141,38 +237,10 @@ def ui_handle_too_long_words(dbcursor, wordtable, max_length):
     )
     if selection == options[0]:
         print(f"Resizing database column to {max_length}")
-        dbcursor.execute("alter table " + wordtable + " modify column word varchar(%s)", (max_length,))
+        database.resize(max_length)
         return None
     elif selection == options[1]:
         return ui_get_file(getcwd())
-
-def validate_gr(character):
-    return (
-        ord('Α') <= ord(character) <= ord('Ρ') or
-        ord('Σ') <= ord(character) <= ord('ώ') or
-        character in ['Ά', 'Έ', 'Ί', 'Ή', 'Ύ', 'Ό', 'Ώ'] or
-        character in ['ά', 'έ', 'ί', 'ή', 'ύ', 'ό', 'ώ'] or
-        character in ['Ϊ', 'Ϋ'] or
-        character in ['ϊ', 'ϋ', 'ΐ', 'ΰ'] or
-        ord('ἀ') <= ord(character) <= ord('ᾼ') or
-        ord('ῂ') <= ord(character) <= ord('ῌ') or
-        ord('ῐ') <= ord(character) <= ord('Ί') or
-        ord('ῠ') <= ord(character) <= ord('Ῥ') or
-        ord('ῲ') <= ord(character) <= ord('ῼ')
-    )
-
-def validate_de(character):
-    return (
-        ord('a') <= ord(character) <= ord('z') or
-        ord('A') <= ord(character) <= ord('Z') or
-        character in ['ö', 'Ö', 'ä', 'Ä', 'ü', 'Ü']
-    )
-
-def validate(character):
-    return (
-        ord('a') <= ord(character) <= ord('z') or
-        ord('A') <= ord(character) <= ord('Z')
-    )
 
 def text_loader():
     global dump
@@ -188,10 +256,11 @@ def text_loader():
             yield revision.text
 
 def parser():
+    global language
     for text in text_loader():
         startid = 0
         for endid, character in enumerate(text):
-            if not validate(character):
+            if not language_validator[language](character):
                 if startid != endid:
                     yield text[startid:endid]
                 startid = endid + 1
@@ -200,27 +269,37 @@ def parser():
         yield text[startid:endid]
 
 dump = None
-db = None
-wordtable = None
-dbcursor = None
 max_progress = None
 progress = 0
+language = None
+database = None
 try:
     def main():
         starttime = datetime.datetime.now()
         global dump
-        global db
-        global wordtable
-        global dbcursor
         global max_progress
         global i
+        global language
+        global database
+
+        backed_type = select_menu.create_select_menu(["mysql", "sqlite3"], "Please select the database type to use:")
+        if backed_type == "mysql":
+            database = mysql_abstractions()
+        elif backed_type == "sqlite3":
+            database = sqlite3_abstractions()
+
         dumppath, dump = ui_get_dump(getcwd())
+
+        language_code = dump.site_info.dbname
+        if language_code in wiki_language and wiki_language[language_code] in language_validator:
+            language = wiki_language[language_code]
+            print(f"Auto detected wiki language {language}")
+        else:
+            language = ui_get_language()
         max_progress = stat(dumppath).st_size
-        db = ui_connect_database()
-        dbcursor = db.cursor()
-        wordtable = ui_get_table(dbcursor)
+
+        database.connect() # Uses UI to connect the database backend
         cache = dict()
-        toolongwords = dict()
         lasti = 0
         largestword = 0
         for i, word in enumerate(parser()):
@@ -234,49 +313,42 @@ try:
                 lasti = i
                 ui_progress_print(i)
 
-        db.ping(reconnect=True, attempts=3)
-        dbcursor.execute("describe " + wordtable)
-        for column, valuetype, _, _, _, _ in dbcursor:
-            if column == "word":
-                mysql_word_limit = int(valuetype[8:-1])
-                dbcursor.fetchall()
-                break
+        db_word_limit = database.get_max_word_size()
         cache_length = len(cache)
-        if largestword > mysql_word_limit:
-            too_long_words_file = ui_handle_too_long_words(dbcursor, wordtable, largestword)
-            db.ping(reconnect=True, attempts=3)
+        if largestword > db_word_limit:
+            too_long_words_file = ui_handle_too_long_words(database, largestword)
             if too_long_words_file is None:
                 # Handled with resize
                 print("Resized Completed! Dumping cache to database...")
                 for i, (word, times) in enumerate(cache.items()):
-                    dbcursor.execute("insert into " + wordtable + " (word, times) values (%s, %s)", (word, times))
+                    database.execute("insert into {table} (word, times) values (%s, %s)", (word, times))
                     print(f"Progress: {i}/{cache_length}. {i * 100 / cache_length}% Completed!", end="\r")
             else:
                 # Handled with file
                 print("File Opened! Dumping cache to database...")
                 for i, (word, times) in enumerate(cache.items()):
-                    if (len(word) > mysql_word_limit):
+                    if (len(word) > db_word_limit):
                         too_long_words_file.write(f"{word} {times}")
                     else:
-                        dbcursor.execute("insert into " + wordtable + " (word, times) values (%s, %s)", (word, times))
+                        database.execute("insert into {table} (word, times) values (%s, %s)", (word, times))
                     print(f"Progress: {i}/{cache_length}. {i * 100 / cache_length}% Completed!", end="\r")
         else:
             # No need to handle
             print("No word exceeds the maximum length limit. Dumping cache to database...")
             for i, (word, times) in enumerate(cache.items()):
-                dbcursor.execute("insert into " + wordtable + " (word, times) values (%s, %s)", (word, times))
+                database.execute("insert into {table} (word, times) values (%s, %s)", (word, times))
                 print(f"Progress: {i}/{cache_length}. {i * 100 / cache_length}% Completed!", end="\r")
-        db.commit()
+        database.commit()
         endtime = datetime.datetime.now()
         print(f"Analysis Ended! Started at: {starttime}. Ended at: {endtime}")
 except KeyboardInterrupt:
     print("Recieved ctrl + c. Exiting...")
     if ui_yes_or_no("Keep words found until this point?"):
         print("Commiting changes...")
-        db.commit()
+        database.commit()
     else:
         print("Rolling back changes...")
-        db.rollback()
+        database.rollback()
 
 if __name__ == '__main__':
     main()
