@@ -93,13 +93,15 @@ class mysql_abstractions:
                     print(e.msg)
         self.cursor = self.connection.cursor()
         self.cursor.execute("show databases")
-        database = select_menu.create_select_menu([i[0] for i in self.cursor], 'Select a database:')
-        self.cursor.execute("USE " + database)
+        self.database = select_menu.create_select_menu([i[0] for i in self.cursor], 'Select a database:')
+        self.cursor.execute("USE " + self.database)
         self.cursor.execute("show tables")
         self.table_name = select_menu.create_select_menu([i[0] for i in self.cursor], 'Select a table for the output data:')
     def execute(self, query, *args, **kwards):
         query = query.format(table=self.table_name)
-        self.connection.ping(reconnect=True, attempts=3)
+        if not self.connection.is_connected():
+            self.connection.reconnect()
+            self.cursor.execute("USE " + self.database)
         self.cursor.execute(query, *args, **kwards)
     def commit(self):
         self.connection.commit()
@@ -115,7 +117,7 @@ class mysql_abstractions:
     def resize(self, size):
         for type_text, max_size in self.text_sizes:
             if max_size > size:
-                self.execute("alter table {table} modify column word {data_type}".format(data_type=type_text))
+                self.execute("alter table {table} modify column word " + type_text)
                 break
 
 class sqlite3_abstractions:
@@ -253,7 +255,11 @@ def text_loader():
             except Exception as e:
                 print("Error incrementing progress counter:", e.msg, "Execution will continue normally...")
                 pass
-            yield revision.text
+            text = revision.text
+            text = text.replace("&lt;", "<")
+            text = text.replace("&gt;", ">")
+            text = html.fromstring(text).text_content()
+            yield text
 
 def parser():
     global language

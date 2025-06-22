@@ -3,18 +3,59 @@ from openpyxl import Workbook
 import mysql.connector
 import sqlite3
 import getpass
-from os import path, getcwd
+from os import path, getcwd, listdir
+from time import sleep
 
 quick_reports = {
-    "Number of all words": "select sum(times) from {table}",
-    "Number of distinct words": "select count(word) from {table}",
-    "Number of all words with length n for every n": "select sum(times) from {table} group py length(word)",
-    "Number of distinct words with length n for every n": "select count(word) from {table} group by length(word)",
-    "Number of all words starting with each letter": "select substr(word, 1, 1), sum(times) from {table} group by substr(word, 1, 1) order by substr(word, 1, 1) asc",
-    "Number of distinct words starting with each letter": "select substr(word, 1, 1), count(times) from {table} group by substr(word, 1, 1) order by substr(word, 1, 1) asc",
-    "Top 50 words in times found.": "select word, times from {table} order by times desc limit 50",
-    "Top 50 longest words": "select word, times from {table} order by length(word) desc limit 50"
+    "Number of all words": {
+        "query": "select sum(times) from {table}",
+        "headers": None
+    },
+    "Number of distinct words": {
+        "query": "select count(word) from {table}",
+        "headers": None
+    },
+    "Number of all words with length n for every n": {
+        "query": "select length(word), sum(times) from {table} group by length(word) order by length(word) asc",
+        "headers": ["Length", "Num of all words"]
+    },
+    "Number of distinct words with length n for every n": {
+        "query": "select length(word), count(word) from {table} group by length(word) order by length(word) asc",
+        "headers": ["Length", "Num of distinct words"]
+    },
+    "Number of all words starting with each letter": {
+        "query": "select substr(word, 1, 1), sum(times) from {table} group by substr(word, 1, 1) order by substr(word, 1, 1) asc",
+        "headers": ["First Letter", "Num of all words"]
+    },
+    "Number of distinct words starting with each letter": {
+        "query": "select substr(word, 1, 1), count(times) from {table} group by substr(word, 1, 1) order by substr(word, 1, 1) asc",
+        "headers": ["First Letter", "Num of distinct words"]
+    },
+    "Top 50 words in times found.": {
+        "query": "select word, times from {table} order by times desc limit 50",
+        "headers": ["Word", "Times found"]
+    },
+    "Top 50 longest words": {
+        "query": "select word, times from {table} order by length(word) desc limit 50",
+        "headers": ["Word", "Times found"]
+    }
 }
+
+def ui_get_file(dir, hidden=False):
+    while True:
+        if hidden:
+            dlist = listdir(dir)
+        else:
+            dlist = [i for i in listdir(dir) if not i.startswith(".")]
+        if not dir == "/":
+            dlist.append(" <- Back ")
+        item = select_menu.create_select_menu(dlist, "Please select a file to open!\nDirectory Listing of " + dir)
+        if item == " <- Back ":
+            dir = path.dirname(dir)
+        else:
+            dir = path.join(dir, item)
+            if path.isfile(dir):
+                return dir
 
 def ui_yes_or_no(question):
     while True:
@@ -65,13 +106,15 @@ class mysql_abstractions:
                     print(e.msg)
         self.cursor = self.connection.cursor()
         self.cursor.execute("show databases")
-        database = select_menu.create_select_menu([i[0] for i in self.cursor], 'Select a database:')
-        self.cursor.execute("USE " + database)
+        self.database = select_menu.create_select_menu([i[0] for i in self.cursor], 'Select a database:')
+        self.cursor.execute("USE " + self.database)
         self.cursor.execute("show tables")
         self.table_name = select_menu.create_select_menu([i[0] for i in self.cursor], 'Select a table for the output data:')
     def execute(self, query, *args, **kwards):
         query = query.format(table=self.table_name)
-        self.connection.ping(reconnect=True, attempts=3)
+        if not self.connection.is_connected():
+            self.connection.reconnect()
+            self.cursor.execute("USE " + self.database)
         self.cursor.execute(query, *args, **kwards)
     def commit(self):
         self.connection.commit()
@@ -87,23 +130,23 @@ class mysql_abstractions:
     def resize(self, size):
         for type_text, max_size in self.text_sizes:
             if max_size > size:
-                self.execute("alter table {table} modify column word {data_type}".format(data_type=type_text))
+                self.execute("alter table {table} modify column word " + type_text)
                 break
 
 class sqlite3_abstractions:
     def connect(self):
-        filename = "wikianalysis.db"
-        i = 2
         while True:
-            if not path.exists(filename):
-                print(f"sqlite3 db will be saved with file name {filename} in the script folder")
+            filename = ui_get_file(getcwd())
+            try:
+                self.connection = sqlite3.connect(filename)
                 break
-            filename = f"wikianalysis({i}).db"
-            i += 1
-        self.connection = sqlite3.connect(filename)
+            except Exception as e:
+                print("Error opening sqlite3 database:", e.msg)
+                print("Please select a valid sqlite3 database file.")
+                sleep(2)
         self.cursor = self.connection.cursor()
-        self.cursor.execute(".tables")
-        self.table_name = select_menu.create_select_menu([table for table in self.cursor], "Please select the sqlite3 table to use:")
+        self.cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        self.table_name = select_menu.create_select_menu([table[0] for table in self.cursor], "Please select the sqlite3 table to use:")
     def execute(self, query, *args, **kwards):
         query = query.replace("%s", "?") # MySQL uses %s for sql-injection-safe values and sqlite uses ?
         self.cursor.execute(query.format(table=self.table_name),*args, **kwards)
@@ -115,14 +158,6 @@ class sqlite3_abstractions:
         return 1000000000 # Default text sqlite3 max size
     def resize():
         pass
-
-def ui_get_table(dbcursor):
-    dbcursor.execute("show databases")
-    database = str(select_menu.create_select_menu([i[0] for i in dbcursor], 'Select a database:'))
-    dbcursor.execute("USE " + database)
-    dbcursor.execute("show tables")
-    table = select_menu.create_select_menu([i[0] for i in dbcursor], 'Select a table for the output data:')
-    return table
 
 def ui_check_box(labels):
     states = dict()
@@ -143,12 +178,14 @@ def main():
         database = sqlite3_abstractions()
     database.connect()
     workbook = Workbook()
-    for i, label, checked in enumerate(ui_check_box(list(quick_reports.keys()))):
+    for i, (label, checked) in enumerate(ui_check_box(list(quick_reports.keys())).items()):
         if checked:
             print(f'Executing "{label}"...')
             worksheet = workbook.create_sheet(f"Sheet {i}")
-            worksheet.append(label)
-            database.execute(quick_reports[label])
+            worksheet.append([label])
+            if quick_reports[label]["headers"] is not None:
+                worksheet.append(quick_reports[label]["headers"])
+            database.execute(quick_reports[label]["query"])
             for row in database.cursor:
                 worksheet.append(row)
     filename = "quick results.xlsx"
